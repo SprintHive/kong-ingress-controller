@@ -1,6 +1,10 @@
 # kong-ingress-controller
 A simple Kubernetes ingress controller for the Kong API gateway
 
+## Purpose
+This controller monitors the kubernetes ingress resources and configures the Kong API
+gateway to match the ingress configuration. 
+
 ## Usage
 
 ```
