@@ -18,7 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	v1beta1 "k8s.io/client-go/pkg/apis/extensions/v1beta1"
+	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/rest/fake"
 
@@ -250,18 +250,18 @@ func TestKongReconciledWithDeletedIngresss(t *testing.T) {
 	waitGroup.Add(1)
 	go testKongOperationCalled(t, "/apis", http.MethodGet, nil, kong.Apis{
 		Data: []*kong.Api{
-			&kong.Api{Name: orphanedAPI1},
-			&kong.Api{Name: orphanedAPI2},
+			{Name: orphanedAPI1},
+			{Name: orphanedAPI2},
 		},
 	}, &waitGroup)
 	waitGroup.Add(1)
 	go testKongOperationCalledMultiple(t, "/apis/"+orphanedAPI1, []Payload{
-		Payload{
+		{
 			request:    nil,
 			response:   kong.Api{UpstreamURL: orphanedAPI1},
 			httpMethod: http.MethodGet,
 		},
-		Payload{
+		{
 			request:    nil,
 			response:   nil,
 			httpMethod: http.MethodDelete,
@@ -269,12 +269,12 @@ func TestKongReconciledWithDeletedIngresss(t *testing.T) {
 	}, &waitGroup)
 	waitGroup.Add(1)
 	go testKongOperationCalledMultiple(t, "/apis/"+orphanedAPI2, []Payload{
-		Payload{
+		{
 			request:    nil,
 			response:   kong.Api{UpstreamURL: orphanedAPI2},
 			httpMethod: http.MethodGet,
 		},
-		Payload{
+		{
 			request:    nil,
 			response:   nil,
 			httpMethod: http.MethodDelete,
@@ -377,7 +377,7 @@ func testKongAPIPatched(t *testing.T, originalIngress *v1beta1.Ingress, newIngre
 }
 
 func testKongOperationCalled(t *testing.T, apiPath string, httpMethod string, expectedPayload interface{}, responsePayload interface{}, waitGroup *sync.WaitGroup) {
-	testKongOperationCalledMultiple(t, apiPath, []Payload{Payload{
+	testKongOperationCalledMultiple(t, apiPath, []Payload{{
 		request:    expectedPayload,
 		response:   responsePayload,
 		httpMethod: httpMethod,
