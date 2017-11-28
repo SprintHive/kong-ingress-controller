@@ -330,8 +330,8 @@ func testAPIDeleted(t *testing.T, apiName string, waitGroup *sync.WaitGroup) {
 	defer waitGroup.Done()
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 
+	apiDeleted := false
 	mux.HandleFunc("/apis/"+apiName, func(writer http.ResponseWriter, request *http.Request) {
-		apiDeleted := false
 		switch request.Method {
 		case http.MethodGet:
 			if !apiDeleted {
