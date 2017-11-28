@@ -232,9 +232,9 @@ func TestKongReconciledWithNewIngresss(t *testing.T) {
 	waitGroup.Add(1)
 	go testKongOperationCalled(t, "/apis", http.MethodPost, apiRequestFromIngress(&sampleIngress), nil, &waitGroup)
 
-	controller := KongIngressController{restClient, kongClient}
+	kiController := KongIngressController{restClient, kongClient}
 	ctx, _ := context.WithTimeout(context.Background(), time.Millisecond*5)
-	controller.createWatches(ctx)
+	kiController.createWatches(ctx)
 
 	<-ctx.Done()
 	waitGroup.Wait()
@@ -286,9 +286,9 @@ func TestKongReconciledWithDeletedIngresss(t *testing.T) {
 		t.Fatal("Could not create rest client")
 	}
 
-	controller := KongIngressController{restClient, kongClient}
+	kiController := KongIngressController{restClient, kongClient}
 	ctx, _ := context.WithTimeout(context.Background(), time.Millisecond)
-	controller.Run(ctx)
+	kiController.Run(ctx)
 
 	waitGroup.Wait()
 }
@@ -309,11 +309,11 @@ func TestResilienceToKongUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal("Could not create mock REST client")
 	}
-	controller := KongIngressController{restClient, kongClient}
+	kiController := KongIngressController{restClient, kongClient}
 	ctx, _ := context.WithTimeout(context.Background(), time.Millisecond*1100)
 
 	// Start controller without starting mock Kong endpoint
-	go controller.Run(ctx)
+	go kiController.Run(ctx)
 
 	// Wait a bit to give the controller an opportunity to fail at connecting to Kong
 	time.Sleep(time.Millisecond * 950)
