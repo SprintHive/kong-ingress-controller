@@ -42,7 +42,7 @@ func main() {
 	}
 
 	clientSet, err := kubernetes.NewForConfig(config)
-	ingClient := clientSet.Extensions().RESTClient()
+	ingClient := clientSet.ExtensionsV1beta1().RESTClient()
 	if err != nil {
 		panic(err.Error())
 	}
