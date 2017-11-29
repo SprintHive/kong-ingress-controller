@@ -63,7 +63,7 @@ func apiReaper(ctx context.Context, controller *KongIngressController) {
 			}
 		}
 
-		glog.V(2).Info("Reaper: Finshed reap cycle")
+		glog.V(2).Info("Reaper: Finished reap cycle")
 		time.Sleep(FullResyncInterval)
 	}
 }
@@ -81,7 +81,7 @@ func reapOrphanedApis(kongClient *kong.Client, ingressClient cache.Getter) error
 		Do().
 		Get()
 	if err != nil {
-		return errors.Wrapf(err, "Failed to get ingresss list")
+		return errors.Wrapf(err, "Failed to get ingress list")
 	}
 
 	ingressList := ingressObjects.(*v1beta1.IngressList)
