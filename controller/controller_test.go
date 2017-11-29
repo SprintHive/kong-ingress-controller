@@ -36,11 +36,6 @@ var (
 	server *httptest.Server
 
 	opTimeout time.Duration
-
-	lookupHost = func(host string) ([]string, error) { return []string{"ip-" + host}, nil }
-
-	// Kubernetes namespace
-	namespace = "default"
 )
 
 type Payload struct {
