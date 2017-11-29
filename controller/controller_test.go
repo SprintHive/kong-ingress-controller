@@ -145,6 +145,7 @@ func TestKongUpdatedOnNewIngress(t *testing.T) {
 	ingressChanged(kongClient)(&newIngress)
 	waitGroup.Wait()
 }
+
 func TestKongUpdatedOnIngressBackendServiceUpdate(t *testing.T) {
 	setup()
 	defer shutdown()
@@ -165,6 +166,7 @@ func TestKongUpdatedOnIngressBackendServiceUpdate(t *testing.T) {
 
 	testKongAPIPatched(t, &originalIngress, &newIngress, &expectedAPIPatch)
 }
+
 func TestKongUpdatedOnIngressBackendServicePortUpdate(t *testing.T) {
 	setup()
 	defer shutdown()
@@ -185,6 +187,7 @@ func TestKongUpdatedOnIngressBackendServicePortUpdate(t *testing.T) {
 
 	testKongAPIPatched(t, &originalIngress, &newIngress, &expectedAPIPatch)
 }
+
 func TestKongUpdatedOnIngressHostUpdate(t *testing.T) {
 	setup()
 	defer shutdown()
@@ -204,6 +207,7 @@ func TestKongUpdatedOnIngressHostUpdate(t *testing.T) {
 
 	testKongAPIPatched(t, &originalIngress, &newIngress, &expectedAPIPatch)
 }
+
 func TestKongReconciledWithNewIngresss(t *testing.T) {
 	setup()
 	defer shutdown()
@@ -234,6 +238,7 @@ func TestKongReconciledWithNewIngresss(t *testing.T) {
 	<-ctx.Done()
 	waitGroup.Wait()
 }
+
 func TestKongReconciledWithDeletedIngresss(t *testing.T) {
 	setup()
 	defer shutdown()
@@ -287,6 +292,7 @@ func TestKongReconciledWithDeletedIngresss(t *testing.T) {
 
 	waitGroup.Wait()
 }
+
 func TestResilienceToKongUnavailable(t *testing.T) {
 	setup()
 	defer shutdown()
