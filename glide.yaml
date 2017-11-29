@@ -1,0 +1,27 @@
+package: github.com/SprintHive/kong-ingress-controller
+import:
+- package: github.com/golang/glog
+- package: github.com/emicklei/go-restful
+  version: 1.0.0
+- package: github.com/nccurry/go-kong
+  subpackages:
+  - kong
+- package: github.com/pkg/errors
+  version: ^0.8.0
+- package: k8s.io/apimachinery
+  subpackages:
+  - pkg/api/errors
+  - pkg/apis/meta/v1
+  - pkg/fields
+  - pkg/runtime
+  - pkg/runtime/schema
+  - pkg/runtime/serializer
+- package: k8s.io/client-go
+  version: ^3.0.0-beta.0
+  subpackages:
+  - kubernetes
+  - pkg/api/v1
+  - pkg/apis/extensions/v1beta1
+  - rest
+  - tools/cache
+  - tools/clientcmd
