@@ -504,6 +504,7 @@ func getAPIRequestFromIngress(ingress *v1beta1.Ingress) kong.ApiRequest {
 		UpstreamURL:  fmt.Sprintf("http://%s.%s:%s", backend.ServiceName, ingress.ObjectMeta.Namespace, backend.ServicePort.String()),
 		Name:         qualifiedNameForFirstPath(ingress),
 		Hosts:        ingress.Spec.Rules[0].Host,
+		Uris:         ingress.Spec.Rules[0].HTTP.Paths[0].Path,
 		PreserveHost: true,
 	}
 }
@@ -514,6 +515,7 @@ func getAPIRequestFromIngressPath(ingressRule *v1beta1.IngressRule, ingressPath 
 		UpstreamURL:  fmt.Sprintf("http://%s.%s:%s", backend.ServiceName, namespace, backend.ServicePort.String()),
 		Name:         getQualifiedAPIName(ingressRule.Host, ingressPath.Path, namespace),
 		Hosts:        ingressRule.Host,
+		Uris:         ingressPath.Path,
 		PreserveHost: true,
 	}
 }
