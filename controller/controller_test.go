@@ -436,6 +436,22 @@ func testKongOperationCalledMultiple(t *testing.T, apiPath string, payloads []Pa
 	}
 }
 
+func testKongOperationNotCalled(t *testing.T, apiPath string, httpMethod string, waitGroup *sync.WaitGroup) {
+	defer waitGroup.Done()
+	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
+
+	mux.HandleFunc(apiPath, func(writer http.ResponseWriter, request *http.Request) {
+		if httpMethod == request.Method {
+			cancel()
+		}
+	})
+
+	<-ctx.Done()
+	if ctx.Err() != context.DeadlineExceeded {
+		t.Errorf("Kong operation %s was called unexpectedly", apiPath)
+	}
+}
+
 func sampleIngress(name string, namespace string) v1beta1.Ingress {
 	return v1beta1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
