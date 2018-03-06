@@ -22,7 +22,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/rest/fake"
 
-	"github.com/nccurry/go-kong/kong"
+	"github.com/SprintHive/go-kong/kong"
 )
 
 var (
@@ -68,52 +68,6 @@ func TestControllerIgnoresSingleServiceIngress(t *testing.T) {
 
 	ingressChanged(kongClient)(&unsupportedIngress)
 }
-func TestControllerIgnoresIngressWithMultipleRules(t *testing.T) {
-	setup()
-	defer shutdown()
-
-	unsupportedIngress := sampleIngress("somename", "infra")
-	newRule := sampleIngress("somename", "infra").Spec.Rules[0]
-	newRule.Host = "some.other.host"
-	unsupportedIngress.Spec.Rules = append(unsupportedIngress.Spec.Rules, newRule)
-
-	// This will match everything until we add more specific handlers
-	mux.HandleFunc("/apis/somename.infra", func(writer http.ResponseWriter, request *http.Request) {
-		t.Fatal("No requests to Kong expected for unsupported ingress")
-	})
-
-	ingressChanged(kongClient)(&unsupportedIngress)
-}
-func TestControllerIgnoresIngressWithNonRootPath(t *testing.T) {
-	setup()
-	defer shutdown()
-
-	unsupportedIngress := sampleIngress("somename", "infra")
-	unsupportedIngress.Spec.Rules[0].HTTP.Paths[0].Path = "/somepath"
-
-	// This will match everything until we add more specific handlers
-	mux.HandleFunc("/apis/somename.infra", func(writer http.ResponseWriter, request *http.Request) {
-		t.Fatal("No requests to Kong expected for unsupported ingress")
-	})
-
-	ingressChanged(kongClient)(&unsupportedIngress)
-}
-
-func TestControllerIgnoresIngressWithMultiplePaths(t *testing.T) {
-	setup()
-	defer shutdown()
-
-	unsupportedIngress := sampleIngress("somename", "infra")
-	newPath := sampleIngress("somename", "infra").Spec.Rules[0].HTTP.Paths[0]
-	newPath.Path = "/newpath"
-	unsupportedIngress.Spec.Rules[0].HTTP.Paths = append(unsupportedIngress.Spec.Rules[0].HTTP.Paths, newPath)
-	// This will match everything until we add more specific handlers
-	mux.HandleFunc("/apis/somename.infra", func(writer http.ResponseWriter, request *http.Request) {
-		t.Fatal("No requests to Kong expected for unsupported ingress")
-	})
-
-	ingressChanged(kongClient)(&unsupportedIngress)
-}
 
 func TestKongUpdatedOnDeletedIngress(t *testing.T) {
 	setup()
@@ -124,7 +78,7 @@ func TestKongUpdatedOnDeletedIngress(t *testing.T) {
 	ingress := sampleIngress(serviceName, "infra")
 
 	waitGroup.Add(1)
-	go testAPIDeleted(t, getQualifiedName(&ingress), &waitGroup)
+	go testAPIDeleted(t, qualifiedNameForFirstPath(&ingress), &waitGroup)
 
 	ingressDeleted(kongClient)(&ingress)
 
@@ -146,6 +100,95 @@ func TestKongUpdatedOnNewIngress(t *testing.T) {
 	waitGroup.Wait()
 }
 
+func TestControllerIgnoresIngressWithDifferentIngressClass(t *testing.T) {
+	setup()
+	defer shutdown()
+	waitGroup := sync.WaitGroup{}
+
+	newIngress := sampleIngress("bestservice", "prod")
+	newIngress.Annotations = map[string]string{ingressClassAnnotationName: "nginx"}
+
+	// Create API
+	waitGroup.Add(1)
+	go testKongOperationNotCalled(t, "/apis", http.MethodPost, &waitGroup)
+
+	ingressChanged(kongClient)(&newIngress)
+	waitGroup.Wait()
+}
+
+func TestControllerDoesntIgnoreIngressWithKongIngressClass(t *testing.T) {
+	setup()
+	defer shutdown()
+	waitGroup := sync.WaitGroup{}
+
+	newIngress := sampleIngress("bestservice", "prod")
+	newIngress.Annotations = map[string]string{ingressClassAnnotationName: kongIngressControllerClass}
+
+	// Create API
+	waitGroup.Add(1)
+	go testKongOperationCalled(t, "/apis", http.MethodPost, getAPIRequestFromIngress(&newIngress), nil, &waitGroup)
+
+	ingressChanged(kongClient)(&newIngress)
+	waitGroup.Wait()
+}
+
+func TestKongUpdatedOnNewIngressWithMultipleRules(t *testing.T) {
+	setup()
+	defer shutdown()
+	waitGroup := sync.WaitGroup{}
+
+	newIngress := sampleIngress("bestservice", "prod")
+	extraRule := sampleIngressRule("extra")
+	newIngress.Spec.Rules = append(newIngress.Spec.Rules, extraRule)
+
+	// Create API
+	waitGroup.Add(1)
+	go testKongOperationCalledMultiple(t, "/apis", []Payload{
+		Payload{
+			request:    getAPIRequestFromIngressPath(&newIngress.Spec.Rules[0], &newIngress.Spec.Rules[0].HTTP.Paths[0], newIngress.Namespace),
+			response:   nil,
+			httpMethod: http.MethodPost,
+		},
+		Payload{
+			request:    getAPIRequestFromIngressPath(&newIngress.Spec.Rules[1], &newIngress.Spec.Rules[1].HTTP.Paths[0], newIngress.Namespace),
+			response:   nil,
+			httpMethod: http.MethodPost,
+		},
+	}, &waitGroup)
+
+	ingressChanged(kongClient)(&newIngress)
+	waitGroup.Wait()
+}
+
+func TestKongUpdatedOnNewIngressWithMultipleRulePaths(t *testing.T) {
+	setup()
+	defer shutdown()
+	waitGroup := sync.WaitGroup{}
+
+	newIngress := sampleIngress("bestservice", "prod")
+	extraPath := samplePath()
+	extraPath.Path += "/extra"
+	newIngress.Spec.Rules[0].HTTP.Paths = append(newIngress.Spec.Rules[0].HTTP.Paths, extraPath)
+
+	// Create API
+	waitGroup.Add(1)
+	go testKongOperationCalledMultiple(t, "/apis", []Payload{
+		Payload{
+			request:    getAPIRequestFromIngressPath(&newIngress.Spec.Rules[0], &newIngress.Spec.Rules[0].HTTP.Paths[0], newIngress.Namespace),
+			response:   nil,
+			httpMethod: http.MethodPost,
+		},
+		Payload{
+			request:    getAPIRequestFromIngressPath(&newIngress.Spec.Rules[0], &newIngress.Spec.Rules[0].HTTP.Paths[1], newIngress.Namespace),
+			response:   nil,
+			httpMethod: http.MethodPost,
+		},
+	}, &waitGroup)
+
+	ingressChanged(kongClient)(&newIngress)
+	waitGroup.Wait()
+}
+
 func TestKongUpdatedOnIngressBackendServiceUpdate(t *testing.T) {
 	setup()
 	defer shutdown()
@@ -154,9 +197,9 @@ func TestKongUpdatedOnIngressBackendServiceUpdate(t *testing.T) {
 	serviceNamespace := "prod"
 
 	originalIngress := sampleIngress(serviceName, serviceNamespace)
-	qualifiedName := getQualifiedName(&originalIngress)
+	qualifiedName := qualifiedNameForFirstPath(&originalIngress)
 	newIngress := sampleIngress(serviceName, serviceNamespace)
-	ingressBackend := getIngressBackend(&newIngress)
+	ingressBackend := ingressBackendForFirstPath(&newIngress)
 	ingressBackend.ServiceName = ingressBackend.ServiceName + "v2"
 
 	expectedAPIPatch := kong.ApiRequest{
@@ -175,34 +218,14 @@ func TestKongUpdatedOnIngressBackendServicePortUpdate(t *testing.T) {
 	serviceNamespace := "prod"
 
 	originalIngress := sampleIngress(serviceName, serviceNamespace)
-	qualifiedName := getQualifiedName(&originalIngress)
+	qualifiedName := qualifiedNameForFirstPath(&originalIngress)
 	newIngress := sampleIngress(serviceName, serviceNamespace)
-	ingressBackend := getIngressBackend(&newIngress)
+	ingressBackend := ingressBackendForFirstPath(&newIngress)
 	ingressBackend.ServicePort = intstr.FromInt(ingressBackend.ServicePort.IntValue() + 1)
 
 	expectedAPIPatch := kong.ApiRequest{
 		ID:          qualifiedName,
 		UpstreamURL: fmt.Sprintf("http://%s.%s:%s", ingressBackend.ServiceName, newIngress.ObjectMeta.Namespace, ingressBackend.ServicePort.String()),
-	}
-
-	testKongAPIPatched(t, &originalIngress, &newIngress, &expectedAPIPatch)
-}
-
-func TestKongUpdatedOnIngressHostUpdate(t *testing.T) {
-	setup()
-	defer shutdown()
-
-	serviceName := "bestservice"
-	serviceNamespace := "prod"
-
-	originalIngress := sampleIngress(serviceName, serviceNamespace)
-	qualifiedName := getQualifiedName(&originalIngress)
-	newIngress := sampleIngress(serviceName, serviceNamespace)
-	newIngress.Spec.Rules[0].Host = "some-other-host"
-
-	expectedAPIPatch := kong.ApiRequest{
-		ID:    qualifiedName,
-		Hosts: newIngress.Spec.Rules[0].Host,
 	}
 
 	testKongAPIPatched(t, &originalIngress, &newIngress, &expectedAPIPatch)
@@ -229,7 +252,7 @@ func TestKongReconciledWithNewIngresss(t *testing.T) {
 
 	// Create missing API
 	waitGroup.Add(1)
-	go testKongOperationCalled(t, "/apis", http.MethodPost, apiRequestFromIngress(&sampleIngress), nil, &waitGroup)
+	go testKongOperationCalled(t, "/apis", http.MethodPost, apiRequestFromIngress(&sampleIngress.Spec.Rules[0], &sampleIngress.Spec.Rules[0].HTTP.Paths[0], sampleIngress.ObjectMeta.Namespace), nil, &waitGroup)
 
 	kiController := KongIngressController{restClient, kongClient}
 	ctx, _ := context.WithTimeout(context.Background(), time.Millisecond*5)
@@ -321,7 +344,7 @@ func TestResilienceToKongUnavailable(t *testing.T) {
 
 	// Make sure the API is correct
 	waitGroup.Add(1)
-	go testKongOperationCalled(t, fmt.Sprintf("/apis/%s", getQualifiedName(&testIngress)), http.MethodGet, nil, apiFromIngress(&testIngress), &waitGroup)
+	go testKongOperationCalled(t, fmt.Sprintf("/apis/%s", qualifiedNameForFirstPath(&testIngress)), http.MethodGet, nil, apiFromIngress(&testIngress), &waitGroup)
 
 	<-ctx.Done()
 	waitGroup.Wait()
@@ -363,7 +386,7 @@ func testKongAPIPatched(t *testing.T, originalIngress *v1beta1.Ingress, newIngre
 	waitGroup := sync.WaitGroup{}
 
 	waitGroup.Add(1)
-	go testKongOperationCalledMultiple(t, fmt.Sprintf("/apis/%s", getQualifiedName(originalIngress)), []Payload{
+	go testKongOperationCalledMultiple(t, fmt.Sprintf("/apis/%s", qualifiedNameForFirstPath(originalIngress)), []Payload{
 		{
 			httpMethod: http.MethodGet,
 			response:   apiFromIngress(originalIngress),
@@ -421,42 +444,60 @@ func sampleIngress(name string, namespace string) v1beta1.Ingress {
 		},
 		Spec: v1beta1.IngressSpec{
 			Rules: []v1beta1.IngressRule{
-				{
-					Host: fmt.Sprintf("%s.somedomain", name),
-					IngressRuleValue: v1beta1.IngressRuleValue{
-						HTTP: &v1beta1.HTTPIngressRuleValue{
-							Paths: []v1beta1.HTTPIngressPath{
-								{
-									Path: "/",
-									Backend: v1beta1.IngressBackend{
-										ServiceName: "service-1",
-										ServicePort: intstr.FromInt(32000),
-									},
-								},
-							},
-						},
-					},
+				sampleIngressRule(name),
+			},
+		},
+	}
+}
+
+func sampleIngressRule(name string) v1beta1.IngressRule {
+	return v1beta1.IngressRule{
+		Host: fmt.Sprintf("%s.somedomain", name),
+		IngressRuleValue: v1beta1.IngressRuleValue{
+			HTTP: &v1beta1.HTTPIngressRuleValue{
+				Paths: []v1beta1.HTTPIngressPath{
+					samplePath(),
 				},
 			},
 		},
 	}
 }
 
+func samplePath() v1beta1.HTTPIngressPath {
+	return v1beta1.HTTPIngressPath{
+		Path: "/",
+		Backend: v1beta1.IngressBackend{
+			ServiceName: "service-1",
+			ServicePort: intstr.FromInt(32000),
+		},
+	}
+}
+
 func apiFromIngress(ingress *v1beta1.Ingress) kong.Api {
-	backend := getIngressBackend(ingress)
+	backend := ingressBackendForFirstPath(ingress)
 	return kong.Api{
 		UpstreamURL: fmt.Sprintf("http://%s.%s:%s", backend.ServiceName, ingress.ObjectMeta.Namespace, backend.ServicePort.String()),
-		Name:        getQualifiedName(ingress),
-		ID:          getQualifiedName(ingress),
+		Name:        qualifiedNameForFirstPath(ingress),
+		ID:          qualifiedNameForFirstPath(ingress),
 	}
 }
 
 func getAPIRequestFromIngress(ingress *v1beta1.Ingress) kong.ApiRequest {
-	backend := getIngressBackend(ingress)
+	backend := ingressBackendForFirstPath(ingress)
 	return kong.ApiRequest{
 		UpstreamURL:  fmt.Sprintf("http://%s.%s:%s", backend.ServiceName, ingress.ObjectMeta.Namespace, backend.ServicePort.String()),
-		Name:         getQualifiedName(ingress),
+		Name:         qualifiedNameForFirstPath(ingress),
 		Hosts:        ingress.Spec.Rules[0].Host,
+		PreserveHost: true,
+	}
+}
+
+func getAPIRequestFromIngressPath(ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, namespace string) kong.ApiRequest {
+	backend := getIngressRuleBackend(ingressRule)
+	return kong.ApiRequest{
+		UpstreamURL:  fmt.Sprintf("http://%s.%s:%s", backend.ServiceName, namespace, backend.ServicePort.String()),
+		Name:         getQualifiedAPIName(ingressRule.Host, ingressPath.Path, namespace),
+		Hosts:        ingressRule.Host,
 		PreserveHost: true,
 	}
 }
@@ -559,4 +600,12 @@ func objectToJSON(obj interface{}) (string, error) {
 	}
 
 	return string(objectJSON), nil
+}
+
+func qualifiedNameForFirstPath(ingress *v1beta1.Ingress) string {
+	return getQualifiedAPIName(ingress.Spec.Rules[0].Host, ingress.Spec.Rules[0].HTTP.Paths[0].Path, ingress.ObjectMeta.Namespace)
+}
+
+func ingressBackendForFirstPath(ingress *v1beta1.Ingress) *v1beta1.IngressBackend {
+	return getIngressRuleBackend(&ingress.Spec.Rules[0])
 }

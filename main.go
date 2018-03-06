@@ -11,7 +11,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/SprintHive/kong-ingress-controller/controller"
-	"github.com/nccurry/go-kong/kong"
+	"github.com/SprintHive/go-kong/kong"
 )
 
 func main() {
