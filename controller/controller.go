@@ -6,10 +6,12 @@ import (
 	"hash/adler32"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
 	"k8s.io/client-go/tools/cache"
 
@@ -18,16 +20,24 @@ import (
 	"github.com/pkg/errors"
 )
 
+// Certificate TODO:
+// * Watch for relevant secret updates
+// * Clean up after ingress delete (considering host may be used my multiple ingress)
+// * Find secret updates that weren't caught by watch
+// * Refactor certificateReconcile to be less ugly
+
 // KongIngressController watches ingress updates and makes corresponding changes to the service proxy
 type KongIngressController struct {
-	IngressClient cache.Getter
-	KongClient    *kong.Client
+	ExtClient  cache.Getter
+	CoreClient cache.Getter
+	KongClient *kong.Client
 }
 
 // New returns an instance of a KongIngressController
-func New(ingressClient cache.Getter, kongClient *kong.Client) *KongIngressController {
+func New(extClient cache.Getter, coreClient cache.Getter, kongClient *kong.Client) *KongIngressController {
 	return &KongIngressController{
-		ingressClient,
+		extClient,
+		coreClient,
 		kongClient,
 	}
 }
@@ -62,7 +72,7 @@ func apiReaper(ctx context.Context, controller *KongIngressController) {
 		case <-ctx.Done():
 			return
 		default:
-			err := reapOrphanedApis(controller.KongClient, controller.IngressClient)
+			err := reapOrphanedApis(controller.KongClient, controller.ExtClient)
 			if err != nil {
 				glog.Errorf("Failed to reap orphaned kong apis: %v", err)
 			}
@@ -73,13 +83,13 @@ func apiReaper(ctx context.Context, controller *KongIngressController) {
 	}
 }
 
-func reapOrphanedApis(kongClient *kong.Client, ingressClient cache.Getter) error {
+func reapOrphanedApis(kongClient *kong.Client, extClient cache.Getter) error {
 	kongApis, _, err := kongClient.Apis.GetAll(nil)
 	if err != nil {
 		return errors.Wrapf(err, "Failed to get kong api list")
 	}
 
-	ingressObjects, err := ingressClient.
+	ingressObjects, err := extClient.
 		Get().
 		Namespace(metav1.NamespaceAll).
 		Resource("ingresses").
@@ -117,7 +127,7 @@ func reapOrphanedApis(kongClient *kong.Client, ingressClient cache.Getter) error
 
 func (controller *KongIngressController) createWatches(ctx context.Context) (cache.Controller, error) {
 	watchedSource := cache.NewListWatchFromClient(
-		controller.IngressClient,
+		controller.ExtClient,
 		"ingresses",
 		metav1.NamespaceAll,
 		fields.Everything())
@@ -127,8 +137,8 @@ func (controller *KongIngressController) createWatches(ctx context.Context) (cac
 		&v1beta1.Ingress{},
 		FullResyncInterval,
 		cache.ResourceEventHandlerFuncs{
-			AddFunc:    ingressChanged(controller.KongClient),
-			UpdateFunc: ingressUpdated(controller.KongClient),
+			AddFunc:    ingressChanged(controller.KongClient, controller.CoreClient),
+			UpdateFunc: ingressUpdated(controller.KongClient, controller.CoreClient),
 			DeleteFunc: ingressDeleted(controller.KongClient),
 		},
 	)
@@ -137,7 +147,7 @@ func (controller *KongIngressController) createWatches(ctx context.Context) (cac
 	return informController, nil
 }
 
-func ingressChanged(kongClient *kong.Client) func(interface{}) {
+func ingressChanged(kongClient *kong.Client, coreClient cache.Getter) func(interface{}) {
 	return func(obj interface{}) {
 		ingress := obj.(*v1beta1.Ingress)
 		if !ingressIsFairGame(ingress) {
@@ -156,9 +166,61 @@ func ingressChanged(kongClient *kong.Client) func(interface{}) {
 				if err != nil {
 					glog.Errorf("An error occurred attempting to create or update API '%s': %v", getQualifiedAPIName(ingressRule.Host, ingressPath.Path, ingress.Namespace), err)
 				}
+				if ingress.Spec.TLS != nil {
+					for _, ingressTLS := range ingress.Spec.TLS {
+						err = reconcileCertificate(kongClient, coreClient, &ingressTLS, ingress.Namespace)
+						if err != nil {
+							glog.Errorf("An error occurred attempting to create or update API '%s': %v", getQualifiedAPIName(ingressRule.Host, ingressPath.Path, ingress.Namespace), err)
+						}
+					}
+				}
 			}
 		}
 	}
+}
+
+func reconcileCertificate(kongClient *kong.Client, coreClient cache.Getter, ingressTLS *v1beta1.IngressTLS, namespace string) error {
+	for _, host := range ingressTLS.Hosts {
+		secretObject, err := coreClient.
+			Get().
+			Namespace(namespace).
+			Resource("secrets").
+			Name(ingressTLS.SecretName).
+			Do().
+			Get()
+		if err != nil {
+			glog.Errorf("Failed to fetch secret '%s': %v", ingressTLS.SecretName, err)
+		} else {
+			secret := secretObject.(*v1.Secret)
+			kongCertificate, _, err := kongClient.Certificates.Get(host)
+			secretCertString := string(secret.Data["tls.crt"])
+			secretKeyString := string(secret.Data["tls.key"])
+			if err != nil {
+				_, err := kongClient.Certificates.Post(&kong.CertificateRequest{
+					Cert: secretCertString,
+					Key:  secretKeyString,
+					Snis: host,
+				})
+				if err != nil {
+					glog.Errorf("Failed to create kong certificate: %v", err)
+				}
+			} else {
+				trimSet := "\n"
+				if strings.Trim(kongCertificate.Cert, trimSet) != strings.Trim(secretCertString, trimSet) || strings.Trim(kongCertificate.Key, trimSet) != strings.Trim(secretKeyString, trimSet) {
+					glog.Infof("Kong certificate for host '%s' is out of date, updating it.", host)
+					_, err := kongClient.Certificates.Patch(&kong.CertificateRequest{
+						Cert: secretCertString,
+						Key:  secretKeyString,
+					}, kongCertificate.ID)
+					if err != nil {
+						glog.Errorf("Failed to update kong certificate '%s': %v", kongCertificate.ID, err)
+					}
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, namespace string) error {
@@ -177,11 +239,11 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 			return errors.Wrapf(err, "Failed to create API '%s'", apiName)
 		}
 	} else {
-		correctUpstreamURL := getUpstreamURL(ingressRule, namespace)
+		correctUpstreamURL := getUpstreamURL(ingressPath, namespace)
 		if api.UpstreamURL != correctUpstreamURL {
 			glog.Infof("Updating upstream URL from '%s' to '%s' on API '%s'", api.UpstreamURL, correctUpstreamURL, api.Name)
 			_, err := kongClient.Apis.Patch(&kong.ApiRequest{
-				ID:          api.ID,
+				Name:        api.Name,
 				UpstreamURL: correctUpstreamURL,
 			})
 			if err != nil {
@@ -224,9 +286,9 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 	return nil
 }
 
-func ingressUpdated(kongClient *kong.Client) func(interface{}, interface{}) {
+func ingressUpdated(kongClient *kong.Client, coreClient cache.Getter) func(interface{}, interface{}) {
 	return func(previousObj, newObj interface{}) {
-		ingressChanged(kongClient)(newObj)
+		ingressChanged(kongClient, coreClient)(newObj)
 	}
 }
 
@@ -275,7 +337,7 @@ func validateIngressSupported(ingress *v1beta1.Ingress) error {
 
 func apiRequestFromIngress(ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, namespace string) kong.ApiRequest {
 	apiName := getQualifiedAPIName(ingressRule.Host, ingressPath.Path, namespace)
-	upstreamURL := getUpstreamURL(ingressRule, namespace)
+	upstreamURL := getUpstreamURL(ingressPath, namespace)
 	return kong.ApiRequest{
 		UpstreamURL:  upstreamURL,
 		Name:         apiName,
@@ -285,17 +347,13 @@ func apiRequestFromIngress(ingressRule *v1beta1.IngressRule, ingressPath *v1beta
 	}
 }
 
-func getUpstreamURL(ingressRule *v1beta1.IngressRule, namespace string) string {
-	backend := getIngressRuleBackend(ingressRule)
+func getUpstreamURL(ingressPath *v1beta1.HTTPIngressPath, namespace string) string {
+	backend := ingressPath.Backend
 	return fmt.Sprintf("http://%s.%s:%s", backend.ServiceName, namespace, backend.ServicePort.String())
 }
 
 func getQualifiedAPIName(host string, path string, namespace string) string {
 	return fmt.Sprintf("%s~%s~%s", host, hashString(path), namespace)
-}
-
-func getIngressRuleBackend(rule *v1beta1.IngressRule) *v1beta1.IngressBackend {
-	return &rule.HTTP.Paths[0].Backend
 }
 
 func hashString(input string) string {

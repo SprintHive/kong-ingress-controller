@@ -3,7 +3,7 @@ import:
 - package: github.com/golang/glog
 - package: github.com/emicklei/go-restful
   version: 1.0.0
-- package: github.com/nccurry/go-kong
+- package: github.com/SprintHive/go-kong
   subpackages:
   - kong
 - package: github.com/pkg/errors

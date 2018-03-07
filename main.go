@@ -10,8 +10,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/SprintHive/kong-ingress-controller/controller"
 	"github.com/SprintHive/go-kong/kong"
+	"github.com/SprintHive/kong-ingress-controller/controller"
 )
 
 func main() {
@@ -42,10 +42,11 @@ func main() {
 	}
 
 	clientSet, err := kubernetes.NewForConfig(config)
-	ingClient := clientSet.ExtensionsV1beta1().RESTClient()
 	if err != nil {
 		panic(err.Error())
 	}
+	extClient := clientSet.ExtensionsV1beta1().RESTClient()
+	coreClient := clientSet.CoreV1().RESTClient()
 
 	// Create Kong client
 	kongClient, err := kong.NewClient(nil, *kongAPIAddress)
@@ -53,7 +54,7 @@ func main() {
 		panic(err.Error())
 	}
 
-	ingController := controller.New(ingClient, kongClient)
+	ingController := controller.New(extClient, coreClient, kongClient)
 
 	ctx := context.Background()
 	go ingController.Run(ctx)
