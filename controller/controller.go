@@ -209,7 +209,7 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 				return errors.Wrapf(err, "Failed to patch API '%s'", apiName)
 			}
 		}
-		if api.Uris != nil || len(api.Uris) == 0 || api.Uris[0] != ingressPath.Path {
+		if api.Uris == nil || len(api.Uris) == 0 || api.Uris[0] != ingressPath.Path {
 			glog.Infof("Updating Uris from '%s' to '%s' on API '%s'", api.Uris, ingressPath.Path, api.Name)
 			_, err := kongClient.Apis.Patch(&kong.ApiRequest{
 				ID:   api.ID,
