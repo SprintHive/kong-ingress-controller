@@ -243,7 +243,7 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 		if api.UpstreamURL != correctUpstreamURL {
 			glog.Infof("Updating upstream URL from '%s' to '%s' on API '%s'", api.UpstreamURL, correctUpstreamURL, api.Name)
 			_, err := kongClient.Apis.Patch(&kong.ApiRequest{
-				Name:        api.Name,
+				ID:          api.ID,
 				UpstreamURL: correctUpstreamURL,
 			})
 			if err != nil {
@@ -266,6 +266,17 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 			_, err := kongClient.Apis.Patch(&kong.ApiRequest{
 				ID:           api.ID,
 				PreserveHost: true,
+			})
+			if err != nil {
+				return errors.Wrapf(err, "Failed to patch API '%s'", apiName)
+			}
+		}
+		if *(api.StripURI) != false {
+			glog.Infof("Updating StripURI from '%v' to '%v' on API '%s'", api.StripURI, false, api.Name)
+			stripURI := false
+			_, err := kongClient.Apis.Patch(&kong.ApiRequest{
+				ID:       api.ID,
+				StripURI: &stripURI,
 			})
 			if err != nil {
 				return errors.Wrapf(err, "Failed to patch API '%s'", apiName)
@@ -338,12 +349,14 @@ func validateIngressSupported(ingress *v1beta1.Ingress) error {
 func apiRequestFromIngress(ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, namespace string) kong.ApiRequest {
 	apiName := getQualifiedAPIName(ingressRule.Host, ingressPath.Path, namespace)
 	upstreamURL := getUpstreamURL(ingressPath, namespace)
+	stripURI := false
 	return kong.ApiRequest{
 		UpstreamURL:  upstreamURL,
 		Name:         apiName,
 		Hosts:        ingressRule.Host,
 		Uris:         ingressPath.Path,
 		PreserveHost: true,
+		StripURI:     &stripURI,
 	}
 }
 
