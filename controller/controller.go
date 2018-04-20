@@ -46,6 +46,7 @@ func New(extClient cache.Getter, coreClient cache.Getter, kongClient *kong.Clien
 var FullResyncInterval = time.Minute
 
 var ingressClassAnnotationName = "kubernetes.io/ingress.class"
+var rewriteAnnotationName = "ingress.kubernetes.io/rewrite-target"
 var kongIngressControllerClass = "kong"
 
 // Run starts the KongIngressController
@@ -160,9 +161,10 @@ func ingressChanged(kongClient *kong.Client, coreClient cache.Getter) func(inter
 		}
 
 		glog.V(2).Infof("Reconciling Ingress '%s' in namespace '%s' with Kong API", ingress.ObjectMeta.Name, ingress.ObjectMeta.Namespace)
+		stripURI := shouldStripUri(ingress)
 		for _, ingressRule := range ingress.Spec.Rules {
 			for _, ingressPath := range ingressRule.HTTP.Paths {
-				err := reconcileAPI(kongClient, &ingressRule, &ingressPath, ingress.Namespace)
+				err := reconcileAPI(kongClient, &ingressRule, &ingressPath, stripURI, ingress.Namespace)
 				if err != nil {
 					glog.Errorf("An error occurred attempting to create or update API '%s': %v", getQualifiedAPIName(ingressRule.Host, ingressPath.Path, ingress.Namespace), err)
 				}
@@ -223,7 +225,7 @@ func reconcileCertificate(kongClient *kong.Client, coreClient cache.Getter, ingr
 	return nil
 }
 
-func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, namespace string) error {
+func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, stripURI bool, namespace string) error {
 	apiName := getQualifiedAPIName(ingressRule.Host, ingressPath.Path, namespace)
 
 	api, resp, err := kongClient.Apis.Get(apiName)
@@ -233,7 +235,7 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 
 	if resp.StatusCode == http.StatusNotFound {
 		glog.Infof("Creating new API '%s'", apiName)
-		kongAPI := apiRequestFromIngress(ingressRule, ingressPath, namespace)
+		kongAPI := apiRequestFromIngress(ingressRule, ingressPath, stripURI, namespace)
 		_, err := kongClient.Apis.Post(&kongAPI)
 		if err != nil {
 			return errors.Wrapf(err, "Failed to create API '%s'", apiName)
@@ -271,9 +273,8 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 				return errors.Wrapf(err, "Failed to patch API '%s'", apiName)
 			}
 		}
-		if *(api.StripURI) != false {
-			glog.Infof("Updating StripURI from '%v' to '%v' on API '%s'", api.StripURI, false, api.Name)
-			stripURI := false
+		if *(api.StripURI) != stripURI {
+			glog.Infof("Updating StripURI from '%v' to '%v' on API '%s'", api.StripURI, stripURI, api.Name)
 			_, err := kongClient.Apis.Patch(&kong.ApiRequest{
 				ID:       api.ID,
 				StripURI: &stripURI,
@@ -346,10 +347,9 @@ func validateIngressSupported(ingress *v1beta1.Ingress) error {
 	return nil
 }
 
-func apiRequestFromIngress(ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, namespace string) kong.ApiRequest {
+func apiRequestFromIngress(ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, stripURI bool, namespace string) kong.ApiRequest {
 	apiName := getQualifiedAPIName(ingressRule.Host, ingressPath.Path, namespace)
 	upstreamURL := getUpstreamURL(ingressPath, namespace)
-	stripURI := false
 	return kong.ApiRequest{
 		UpstreamURL:  upstreamURL,
 		Name:         apiName,
@@ -376,6 +376,13 @@ func hashString(input string) string {
 
 func ingressIsFairGame(ingress *v1beta1.Ingress) bool {
 	if val, ok := ingress.Annotations[ingressClassAnnotationName]; ok && val == kongIngressControllerClass || !ok {
+		return true
+	}
+	return false
+}
+
+func shouldStripUri(ingress *v1beta1.Ingress) bool {
+	if val, ok := ingress.Annotations[rewriteAnnotationName]; ok && val == "/" {
 		return true
 	}
 	return false
