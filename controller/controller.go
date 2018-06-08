@@ -237,7 +237,7 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 
 	if resp.StatusCode == http.StatusNotFound {
 		glog.Infof("Creating new API '%s'", apiName)
-		kongAPI := apiRequestFromIngress(ingressRule, ingressPath, stripURI, namespace)
+		kongAPI := apiRequestFromIngress(ingressRule, ingressPath, stripURI, preserveHost, namespace)
 		_, err := kongClient.Apis.Post(&kongAPI)
 		if err != nil {
 			return errors.Wrapf(err, "Failed to create API '%s'", apiName)
@@ -265,11 +265,11 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 				return errors.Wrapf(err, "Failed to patch API '%s'", apiName)
 			}
 		}
-		if api.PreserveHost != preserveHost {
+		if *(api.PreserveHost) != preserveHost {
 			glog.Infof("Updating PreserveHost from '%t' to '%t' on API '%s'", api.PreserveHost, preserveHost, api.Name)
 			_, err := kongClient.Apis.Patch(&kong.ApiRequest{
 				ID:           api.ID,
-				PreserveHost: preserveHost,
+				PreserveHost: &preserveHost,
 			})
 			if err != nil {
 				return errors.Wrapf(err, "Failed to patch API '%s'", apiName)
@@ -349,7 +349,7 @@ func validateIngressSupported(ingress *v1beta1.Ingress) error {
 	return nil
 }
 
-func apiRequestFromIngress(ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, stripURI bool, namespace string) kong.ApiRequest {
+func apiRequestFromIngress(ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, stripURI bool, preserveHost bool, namespace string) kong.ApiRequest {
 	apiName := getQualifiedAPIName(ingressRule.Host, ingressPath.Path, namespace)
 	upstreamURL := getUpstreamURL(ingressPath, namespace)
 	return kong.ApiRequest{
@@ -357,7 +357,7 @@ func apiRequestFromIngress(ingressRule *v1beta1.IngressRule, ingressPath *v1beta
 		Name:         apiName,
 		Hosts:        ingressRule.Host,
 		Uris:         ingressPath.Path,
-		PreserveHost: true,
+		PreserveHost: &preserveHost,
 		StripURI:     &stripURI,
 	}
 }
