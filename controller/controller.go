@@ -47,6 +47,7 @@ var FullResyncInterval = time.Minute
 
 var ingressClassAnnotationName = "kubernetes.io/ingress.class"
 var rewriteAnnotationName = "ingress.kubernetes.io/rewrite-target"
+var preserveHostAnnotationName = "ingress.kubernetes.io/preserve-host"
 var kongIngressControllerClass = "kong"
 
 // Run starts the KongIngressController
@@ -161,10 +162,9 @@ func ingressChanged(kongClient *kong.Client, coreClient cache.Getter) func(inter
 		}
 
 		glog.V(2).Infof("Reconciling Ingress '%s' in namespace '%s' with Kong API", ingress.ObjectMeta.Name, ingress.ObjectMeta.Namespace)
-		stripURI := shouldStripUri(ingress)
 		for _, ingressRule := range ingress.Spec.Rules {
 			for _, ingressPath := range ingressRule.HTTP.Paths {
-				err := reconcileAPI(kongClient, &ingressRule, &ingressPath, stripURI, ingress.Namespace)
+				err := reconcileAPI(kongClient, &ingressRule, &ingressPath, ingress, ingress.Namespace)
 				if err != nil {
 					glog.Errorf("An error occurred attempting to create or update API '%s': %v", getQualifiedAPIName(ingressRule.Host, ingressPath.Path, ingress.Namespace), err)
 				}
@@ -225,8 +225,10 @@ func reconcileCertificate(kongClient *kong.Client, coreClient cache.Getter, ingr
 	return nil
 }
 
-func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, stripURI bool, namespace string) error {
+func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, ingress *v1beta1.Ingress, namespace string) error {
 	apiName := getQualifiedAPIName(ingressRule.Host, ingressPath.Path, namespace)
+	stripURI := shouldStripUri(ingress)
+	preserveHost := shouldPreserveHost(ingress)
 
 	api, resp, err := kongClient.Apis.Get(apiName)
 	if err != nil && (resp == nil || resp.StatusCode != http.StatusNotFound) {
@@ -263,11 +265,11 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 				return errors.Wrapf(err, "Failed to patch API '%s'", apiName)
 			}
 		}
-		if api.PreserveHost != true {
-			glog.Infof("Updating PreserveHost from '%s' to '%s' on API '%s'", false, true, api.Name)
+		if api.PreserveHost != preserveHost {
+			glog.Infof("Updating PreserveHost from '%t' to '%t' on API '%s'", api.PreserveHost, preserveHost, api.Name)
 			_, err := kongClient.Apis.Patch(&kong.ApiRequest{
 				ID:           api.ID,
-				PreserveHost: true,
+				PreserveHost: preserveHost,
 			})
 			if err != nil {
 				return errors.Wrapf(err, "Failed to patch API '%s'", apiName)
@@ -383,6 +385,13 @@ func ingressIsFairGame(ingress *v1beta1.Ingress) bool {
 
 func shouldStripUri(ingress *v1beta1.Ingress) bool {
 	if val, ok := ingress.Annotations[rewriteAnnotationName]; ok && val == "/" {
+		return true
+	}
+	return false
+}
+
+func shouldPreserveHost(ingress *v1beta1.Ingress) bool {
+	if val, ok := ingress.Annotations[preserveHostAnnotationName]; ok && val == "true" {
 		return true
 	}
 	return false
