@@ -9,4 +9,5 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /kong-ingress-con
 
 FROM scratch
 COPY --from=builder /kong-ingress-controller /kong-ingress-controller
+RUN mkdir /tmp
 ENTRYPOINT ["/kong-ingress-controller", "-alsologtostderr"]
