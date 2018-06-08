@@ -6,8 +6,9 @@ ADD . /go/src/github.com/SprintHive/kong-ingress-controller
 WORKDIR /go/src/github.com/SprintHive/kong-ingress-controller
 RUN glide install
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /kong-ingress-controller .
+RUN mkdir /emptytmp
 
 FROM scratch
 COPY --from=builder /kong-ingress-controller /kong-ingress-controller
-RUN mkdir /tmp
+COPY --from=builder /emptytmp /tmp
 ENTRYPOINT ["/kong-ingress-controller", "-alsologtostderr"]
