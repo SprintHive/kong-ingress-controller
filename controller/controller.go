@@ -48,6 +48,7 @@ var FullResyncInterval = time.Minute
 var ingressClassAnnotationName = "kubernetes.io/ingress.class"
 var rewriteAnnotationName = "ingress.kubernetes.io/rewrite-target"
 var preserveHostAnnotationName = "ingress.kubernetes.io/preserve-host"
+var permitHttpAnnotationName = "ingress.kubernetes.io/permit-http"
 var kongIngressControllerClass = "kong"
 
 // Run starts the KongIngressController
@@ -229,6 +230,7 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 	apiName := getQualifiedAPIName(ingressRule.Host, ingressPath.Path, namespace)
 	stripURI := shouldStripUri(ingress)
 	preserveHost := shouldPreserveHost(ingress)
+	httpsOnly := !shouldPermitHttp(ingress)
 
 	api, resp, err := kongClient.Apis.Get(apiName)
 	if err != nil && (resp == nil || resp.StatusCode != http.StatusNotFound) {
@@ -237,7 +239,7 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 
 	if resp.StatusCode == http.StatusNotFound {
 		glog.Infof("Creating new API '%s'", apiName)
-		kongAPI := apiRequestFromIngress(ingressRule, ingressPath, stripURI, preserveHost, namespace)
+		kongAPI := apiRequestFromIngress(ingressRule, ingressPath, stripURI, preserveHost, httpsOnly, namespace)
 		_, err := kongClient.Apis.Post(&kongAPI)
 		if err != nil {
 			return errors.Wrapf(err, "Failed to create API '%s'", apiName)
@@ -266,7 +268,7 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 			}
 		}
 		if *(api.PreserveHost) != preserveHost {
-			glog.Infof("Updating PreserveHost from '%t' to '%t' on API '%s'", api.PreserveHost, preserveHost, api.Name)
+			glog.Infof("Updating PreserveHost from '%t' to '%t' on API '%s'", *(api.PreserveHost), preserveHost, api.Name)
 			_, err := kongClient.Apis.Patch(&kong.ApiRequest{
 				ID:           api.ID,
 				PreserveHost: &preserveHost,
@@ -285,11 +287,22 @@ func reconcileAPI(kongClient *kong.Client, ingressRule *v1beta1.IngressRule, ing
 				return errors.Wrapf(err, "Failed to patch API '%s'", apiName)
 			}
 		}
-		if api.Uris == nil || len(api.Uris) == 0 || api.Uris[0] != ingressPath.Path {
+		apiUrisEmpty := api.Uris == nil || len(api.Uris) == 0
+		if (apiUrisEmpty && ingressPath.Path != "") || (!apiUrisEmpty && api.Uris[0] != ingressPath.Path) {
 			glog.Infof("Updating Uris from '%s' to '%s' on API '%s'", api.Uris, ingressPath.Path, api.Name)
 			_, err := kongClient.Apis.Patch(&kong.ApiRequest{
 				ID:   api.ID,
 				Uris: ingressPath.Path,
+			})
+			if err != nil {
+				return errors.Wrapf(err, "Failed to patch API '%s'", apiName)
+			}
+		}
+		if *(api.HttpsOnly) != httpsOnly {
+			glog.Infof("Updating httpsOnly from '%v' to '%v' on API '%s'", api.HttpsOnly, httpsOnly, api.Name)
+			_, err := kongClient.Apis.Patch(&kong.ApiRequest{
+				ID:        api.ID,
+				HttpsOnly: &httpsOnly,
 			})
 			if err != nil {
 				return errors.Wrapf(err, "Failed to patch API '%s'", apiName)
@@ -349,7 +362,7 @@ func validateIngressSupported(ingress *v1beta1.Ingress) error {
 	return nil
 }
 
-func apiRequestFromIngress(ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, stripURI bool, preserveHost bool, namespace string) kong.ApiRequest {
+func apiRequestFromIngress(ingressRule *v1beta1.IngressRule, ingressPath *v1beta1.HTTPIngressPath, stripURI bool, preserveHost bool, httpsOnly bool, namespace string) kong.ApiRequest {
 	apiName := getQualifiedAPIName(ingressRule.Host, ingressPath.Path, namespace)
 	upstreamURL := getUpstreamURL(ingressPath, namespace)
 	return kong.ApiRequest{
@@ -358,13 +371,18 @@ func apiRequestFromIngress(ingressRule *v1beta1.IngressRule, ingressPath *v1beta
 		Hosts:        ingressRule.Host,
 		Uris:         ingressPath.Path,
 		PreserveHost: &preserveHost,
+		HttpsOnly:    &httpsOnly,
 		StripURI:     &stripURI,
 	}
 }
 
 func getUpstreamURL(ingressPath *v1beta1.HTTPIngressPath, namespace string) string {
 	backend := ingressPath.Backend
-	return fmt.Sprintf("http://%s.%s:%s", backend.ServiceName, namespace, backend.ServicePort.String())
+	scheme := "http"
+	if backend.ServicePort.IntValue() == 443 {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s.%s:%s", scheme, backend.ServiceName, namespace, backend.ServicePort.String())
 }
 
 func getQualifiedAPIName(host string, path string, namespace string) string {
@@ -391,7 +409,14 @@ func shouldStripUri(ingress *v1beta1.Ingress) bool {
 }
 
 func shouldPreserveHost(ingress *v1beta1.Ingress) bool {
-	if val, ok := ingress.Annotations[preserveHostAnnotationName]; ok && val == "true" {
+	if val, ok := ingress.Annotations[preserveHostAnnotationName]; ok && val == "false" {
+		return false
+	}
+	return true
+}
+
+func shouldPermitHttp(ingress *v1beta1.Ingress) bool {
+	if val, ok := ingress.Annotations[permitHttpAnnotationName]; ok && val == "true" {
 		return true
 	}
 	return false
